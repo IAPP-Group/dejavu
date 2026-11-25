@@ -1,0 +1,42 @@
+# Location of the datasets on disk.
+#
+# The split CSVs (data/splits/*.csv) store dataset-relative paths whose first
+# component is a dataset key, e.g.
+#   GenImage/adm/0_adm_153.PNG
+#   ImageNet/ILSVRC2012_val_00000001.JPEG
+#   Synthbuster/dalle2/r033bb79dt.png
+# Each key is resolved to the root below. Alternatively, set `data_root` (or pass
+# --data_root) to a folder holding one sub-folder per key; roots set here override it.
+
+data_root: null
+
+roots:
+  # GenImage (https://github.com/GenImage-Dataset/GenImage): only the fake images of the
+  # official evaluation partition (<generator>/.../val/ai) are used, see genimage_layout.
+  GenImage: /path/to/GenImage
+  # Real images of the GenImage splits: the official ImageNet (ILSVRC2012) validation images,
+  # with their original names (ILSVRC2012_val_XXXXXXXX.JPEG) in a single folder.
+  ImageNet: /path/to/ILSVRC2012/val
+  # Synthbuster: folder with dalle2/, dalle3/, firefly/, ...
+  Synthbuster: /path/to/synthbuster
+  # RAISE-1k (real images of Synthbuster): folder with the r*.TIF files.
+  RAISE: /path/to/RAISE-1k
+  # AIGIBench: folder containing test/<subset>/{0_real,1_fake}
+  AIGIBench: /path/to/AIGIBench
+  # CO-SPY-Bench: folder containing Co-Spy-Bench/{real_image_examples,synthetic}
+  CO-SPY: /path/to/CO-SPY
+  # Community Forensics evaluation set, decoded with tools/prepare_communityforensics.py
+  CommunityForensics: /path/to/CommunityForensics
+
+# Folder, relative to the GenImage root, holding the fake evaluation images of each
+# generator. Defaults follow the official GenImage release; change them if your copy
+# is organized differently.
+genimage_layout:
+  adm: ADM/imagenet_ai_0508_adm/val/ai
+  biggan: BigGAN/imagenet_ai_0419_biggan/val/ai
+  glide: glide/imagenet_glide/val/ai
+  midjourney: Midjourney/imagenet_midjourney/val/ai
+  sdv4: stable_diffusion_v_1_4/imagenet_ai_0419_sdv4/val/ai
+  sdv5: stable_diffusion_v_1_5/imagenet_ai_0424_sdv5/val/ai
+  vqdm: VQDM/imagenet_ai_0419_vqdm/val/ai
+  wukong: wukong/imagenet_ai_0424_wukong/val/ai

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+features/
+results/
+configs/*_local.yaml
+.*.lock
+tools/
