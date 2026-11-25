@@ -124,29 +124,30 @@ def load_split(name):
 # Image path resolution
 # ---------------------------------------------------------------------------
 
-# Default location, inside the GenImage root, of the fake images of each generator.
-# The split CSVs use GenImage's official *evaluation* partition (`val/ai`).
-DEFAULT_GENIMAGE_LAYOUT = {
-    "adm": "ADM/imagenet_ai_0508_adm/val/ai",
-    "biggan": "BigGAN/imagenet_ai_0419_biggan/val/ai",
-    "glide": "glide/imagenet_glide/val/ai",
-    "midjourney": "Midjourney/imagenet_midjourney/val/ai",
-    "sdv4": "stable_diffusion_v_1_4/imagenet_ai_0419_sdv4/val/ai",
-    "sdv5": "stable_diffusion_v_1_5/imagenet_ai_0424_sdv5/val/ai",
-    "vqdm": "VQDM/imagenet_ai_0419_vqdm/val/ai",
-    "wukong": "wukong/imagenet_ai_0424_wukong/val/ai",
+# Official GenImage release: folder, relative to the GenImage root, of the `<generator>_imagenet`
+# folder of the split CSVs (whose fakes are in its `ai/` sub-folder, as in the official `val/ai`).
+OFFICIAL_GENIMAGE_LAYOUT = {
+    "adm_imagenet": "ADM/imagenet_ai_0508_adm/val",
+    "biggan_imagenet": "BigGAN/imagenet_ai_0419_biggan/val",
+    "glide_imagenet": "glide/imagenet_glide/val",
+    "midjourney_imagenet": "Midjourney/imagenet_midjourney/val",
+    "sdv4_imagenet": "stable_diffusion_v_1_4/imagenet_ai_0419_sdv4/val",
+    "sdv5_imagenet": "stable_diffusion_v_1_5/imagenet_ai_0424_sdv5/val",
+    "vqdm_imagenet": "VQDM/imagenet_ai_0419_vqdm/val",
+    "wukong_imagenet": "wukong/imagenet_ai_0424_wukong/val",
 }
 DATASET_KEYS = ["GenImage", "ImageNet", "Synthbuster", "RAISE", "AIGIBench", "CO-SPY", "CommunityForensics"]
 
 
 class PathResolver:
-    """Map the dataset-relative paths of the split CSVs (e.g. `GenImage/adm/0_adm_153.PNG`,
-    `ImageNet/ILSVRC2012_val_00000001.JPEG`) to files on disk.
+    """Map the dataset-relative paths of the split CSVs (e.g. `GenImage/adm_imagenet/ai/0_adm_153.PNG`,
+    `ImageNet/ILSVRC2012_val_00000001_n01751748.JPEG`) to files on disk.
 
-    Each CSV path starts with a dataset key (see DATASET_KEYS). Its root is taken from the
-    YAML config (`roots:`), or is `<data_root>/<key>` when only `data_root` is given.
-    GenImage paths are `GenImage/<generator>/<file>` and the generator folder is mapped
-    through `genimage_layout` (default: the official GenImage folder structure).
+    Each CSV path starts with a dataset key (see DATASET_KEYS) and the rest is the path inside
+    that dataset's root. The root is taken from the YAML config (`roots:`), or is
+    `<data_root>/<key>` when only `data_root` is given. Optionally, `genimage_layout` maps the
+    first folder of GenImage paths (`<generator>_imagenet`) to another folder, e.g. the
+    official GenImage structure (OFFICIAL_GENIMAGE_LAYOUT, used with `genimage_layout: official`).
     """
 
     def __init__(self, config_path=None, data_root=None):
@@ -158,17 +159,17 @@ class PathResolver:
         data_root = data_root or cfg.get("data_root")
         self.roots = {k: os.path.join(data_root, k) for k in DATASET_KEYS} if data_root else {}
         self.roots.update({k: v for k, v in (cfg.get("roots") or {}).items() if v})
-        self.genimage_layout = dict(DEFAULT_GENIMAGE_LAYOUT)
-        self.genimage_layout.update(cfg.get("genimage_layout") or {})
+        layout = cfg.get("genimage_layout") or {}
+        self.genimage_layout = dict(OFFICIAL_GENIMAGE_LAYOUT) if layout == "official" else dict(layout)
 
     def __call__(self, rel_path):
         key, rest = rel_path.split("/", 1)
         if key not in self.roots:
             raise KeyError(f"No root configured for dataset '{key}' (path {rel_path}). "
                            f"Set it under `roots:` in the data config, or pass --data_root.")
-        if key == "GenImage":
-            gen, rest = rest.split("/", 1)
-            return os.path.join(self.roots[key], self.genimage_layout[gen], rest)
+        if key == "GenImage" and self.genimage_layout:
+            folder, rest = rest.split("/", 1)
+            rest = os.path.join(self.genimage_layout.get(folder, folder), rest)
         return os.path.join(self.roots[key], rest)
 
 

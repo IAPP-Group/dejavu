@@ -7,7 +7,7 @@ import joblib
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 CLASSIFIERS = ["1-MLP", "2-MLP", "3-MLP", "LR", "SVM", "kNN"]
 MLP_CLASSIFIERS = ["1-MLP", "2-MLP", "3-MLP"]
@@ -40,17 +40,30 @@ class MLPClassifier:
         self.model = build_mlp(name, input_size, num_classes).to(device)
 
     def fit(self, X, y, weights, epochs=50, batch_size=64, lr=3e-4):
-        loader = DataLoader(TensorDataset(torch.as_tensor(X), torch.as_tensor(y, dtype=torch.long)),
-                            batch_size=batch_size, shuffle=True)
+        # The features fit in GPU memory: batches are drawn from a random permutation of the
+        # training set at every epoch (torch.randperm on the global generator, seeded by the
+        # caller), as a shuffled DataLoader would do, without its per-batch CPU overhead.
+        X = torch.as_tensor(X, dtype=torch.float32).to(self.device)
+        Y = torch.as_tensor(y, dtype=torch.long).to(self.device)
+        n = len(X)
+        steps = (n + batch_size - 1) // batch_size
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         criterion = nn.CrossEntropyLoss(weight=weights.to(self.device))
         self.model.train()
-        for _ in range(epochs):
-            for xb, yb in loader:
-                xb, yb = xb.to(self.device), yb.to(self.device)
+        bar = tqdm(total=epochs * steps, unit="batch", leave=False, dynamic_ncols=True, mininterval=0.5)
+        for epoch in range(epochs):
+            perm = torch.randperm(n).to(self.device)
+            total = torch.zeros((), device=self.device)
+            for i in range(0, n, batch_size):
+                idx = perm[i:i + batch_size]
                 optimizer.zero_grad()
-                criterion(self.model(xb), yb).backward()
+                loss = criterion(self.model(X[idx]), Y[idx])
+                loss.backward()
                 optimizer.step()
+                total += loss.detach() * len(idx)
+                bar.update()
+            bar.set_description(f"    epoch {epoch + 1}/{epochs}  loss {total.item() / n:.4f}")
+        bar.close()
         return self
 
     @torch.no_grad()
@@ -106,7 +119,8 @@ class SklearnClassifier:
 
     def fit(self, X, y, **_):
         from sklearn.model_selection import GridSearchCV
-        gs = GridSearchCV(self.estimator, param_grid=self.grid, cv=5, n_jobs=self.n_jobs)
+        # verbose=1 prints how many fits the 5-fold grid search runs
+        gs = GridSearchCV(self.estimator, param_grid=self.grid, cv=5, n_jobs=self.n_jobs, verbose=1)
         gs.fit(X, y)
         self.estimator, self.best_params = gs.best_estimator_, gs.best_params_
         return self

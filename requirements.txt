@@ -18,3 +18,4 @@ tqdm==4.66.4
 PyYAML==6.0.1
 matplotlib==3.10.7
 pyarrow==21.0.0   # only for tools/prepare_communityforensics.py
+streamlit==1.51.0  # only for the graphical interface (app.py)

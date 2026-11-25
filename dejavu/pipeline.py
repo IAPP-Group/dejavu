@@ -205,7 +205,8 @@ def train(cfg, opts, features_dir, out_dir, eval_sets, skip_existing=False):
         w = class_weights(y, len(classes))
         clf = build_classifier(cfg.classifier, X.shape[1], len(classes), opts.device, opts.n_jobs)
         n_real, n_fake = int((df.label == "real").sum()), int((df.label == "fake").sum())
-        print(f"  run {run}: training on {len(df)} images (real {n_real}, fake {n_fake})")
+        print(f"  run {run} ({run + 1}/{runs}): training {cfg.classifier} on {len(df)} images "
+              f"(real {n_real}, fake {n_fake})", flush=True)
         clf.fit(X, y, weights=w, epochs=opts.epochs, batch_size=opts.batch_size, lr=opts.lr)
         if getattr(clf, "best_params", None):
             print(f"    best params (5-fold CV): {clf.best_params}")

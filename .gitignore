@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 features/
 results/
+results_paper/
 configs/*_local.yaml
 .*.lock
 tools/
+gui_jobs/
+notebooks/

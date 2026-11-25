@@ -26,6 +26,8 @@ extract_features.py   feature extraction (backbones, preprocessing, layers, post
 train.py              train classifiers on GenImage train, evaluate on any evaluation set (validation or test)
 evaluate.py           evaluate trained classifiers (OOD sets, post-processed images)
 summarize.py          average the per-run metrics (mean ± std)
+app.py                graphical interface over the scripts above
+notebooks/            paper_tables.ipynb: the tables of the paper (DataFrame + LaTeX) from the metrics
 dejavu/               library code
 data/splits/          split CSVs (image paths, labels, generators, prompts)
 configs/              dataset locations
@@ -53,15 +55,15 @@ DINOv3-ViT-7B/16 in float32 needs ~28 GB of GPU memory; on smaller GPUs use
 
 | dataset key | used for | what to download | download link |
 |---|---|---|---|
-| `GenImage` | training, in-domain evaluation (fake) | GenImage, evaluation partition (`<generator>/.../val/ai`) of the 8 generators | https://github.com/GenImage-Dataset/GenImage |
-| `ImageNet` | training, in-domain evaluation (real) | ILSVRC2012 validation images (`ILSVRC2012_val_XXXXXXXX.JPEG`) | https://huggingface.co/datasets/ILSVRC/imagenet-1k |
+| `GenImage` | training, in-domain evaluation (fake) | GenImage, evaluation partition (`val/ai`) of the 8 generators; the CSVs expect `<generator>_imagenet/ai/` (e.g. `adm_imagenet/ai/`), or set `genimage_layout: official` to read the official folders | https://github.com/GenImage-Dataset/GenImage |
+| `ImageNet` | training, in-domain evaluation (real) | ILSVRC2012 validation images, in one folder and named `ILSVRC2012_val_XXXXXXXX_<synset>.JPEG` (original name + WordNet id of the class) | https://huggingface.co/datasets/ILSVRC/imagenet-1k |
 | `Synthbuster` | OOD | Synthbuster (9 diffusion generators) | https://zenodo.org/records/10066460?preview_file=synthbuster.zip |
 | `RAISE` | OOD (real images of Synthbuster) | RAISE-1k (`r*.TIF`) | https://loki.disi.unitn.it/RAISE/download.html |
 | `AIGIBench` | OOD | AIGIBench test set (`test/<subset>/{0_real,1_fake}`) | https://huggingface.co/datasets/HorizonTEL/AIGIBench | 
 | `CO-SPY` | OOD | CO-SPY-Bench (`Co-Spy-Bench/{real_image_examples,synthetic}`); we use a portion of the CC3M, SBU and TextCaps subsets | https://github.com/Megum1/CO-SPY |
 | `CommunityForensics` | OOD | Community Forensics evaluation set | https://huggingface.co/datasets/OwensLab/CommunityForensics-Eval |
 
-Within `configs/data_paths.yaml`, set the root of each dataset (or a single `data_root` with one sub-folder per key) and, if your GenImage copy is not organized as the official release, the per-generator folders under `genimage_layout`.
+Within `configs/data_paths.yaml`, set the root of each dataset (or a single `data_root` with one sub-folder per key) and, if needed, `genimage_layout`.
 
 ### Splits (`data/splits/`)
 
@@ -203,6 +205,55 @@ Predicted labels are the argmax of the class scores, with no threshold tuning.
 python summarize.py results/metrics/detection.csv --filter eval_set=genimage_validation --output summary.csv
 ```
 
+### 5. Graphical interface
+
+`app.py` is a web interface for the same pipeline. Backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators, evaluation sets and post-processing are chosen from forms instead of command-line options. The interface only builds and runs the commands of sections 1-3, so its results are identical to those of the scripts.
+
+#### Starting it
+
+```bash
+conda activate dejavu
+streamlit run app.py        # then open http://localhost:8501
+```
+
+On a remote server, forward port 8501 to your machine: VS Code does it automatically, otherwise use `ssh -L 8501:localhost:8501 <server>`. Use `--server.port <port>` to change the port. Streamlit is listed in `requirements.txt`; usage statistics are disabled in `.streamlit/config.toml`.
+
+#### Sidebar
+
+| setting | meaning |
+|---|---|
+| Data config (YAML) / Data root | dataset locations, as `--data_config` / `--data_root` (only needed for extraction) |
+| Features folder | `--features_dir` (default `features`) |
+| Output folder | `--out_dir` (default `results`): classifiers, predictions, metrics, confusion matrices |
+| GPUs | none selected: one job that sees all the GPUs; one: the job runs on it; several, or *Use all GPUs*: the work is split into one parallel job per GPU (see below) |
+
+#### Tabs
+
+| tab | what it does |
+|---|---|
+| Feature extraction | runs `extract_features.py`: backbones, splits, preprocessing, final embedding / selected layers / all layers, post-processing |
+| Training | runs `train.py`: backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators (cross-model), evaluation sets, hyperparameters (defaults = paper) |
+| Evaluation | runs `evaluate.py` on saved classifiers: same configuration options as Training, plus evaluation sets, post-processing and runs |
+| Jobs | launched jobs with status and live log; a running job can be stopped, finished ones deleted |
+| Results | mean (± std) over runs of `<out_dir>/metrics/*.csv`, with filters and CSV download; optionally the confusion matrices |
+
+#### Typical workflow
+
+1. **Feature extraction**: select the backbones (★ marks DejaVu's, MetaCLIP2-ViT-bigG/14) and the splits (`genimage`, `ood`), then press **▶ Run**.
+2. **Jobs**: follow the extraction log; progress bars update in place.
+3. **Training**: select the same backbones and preprocessing / layers used for extraction, the classifiers and tasks, and press **▶ Run**. The tab warns if some feature files have not been extracted yet.
+4. **Evaluation** (optional): evaluate the saved classifiers on other sets (e.g. `ood`) or on post-processed images, whose features must be extracted first with the same post-processing.
+5. **Results**: choose a metrics file (`detection.csv`, `attribution.csv`, ...), filter by backbone, classifier, evaluation set, etc., and download the averaged table. Turn on *Show confusion matrices* to browse the matrices of attribution and detection+attribution; they are off by default because listing them is slow with many results.
+
+#### Good to know
+
+- Every form shows the exact command it will run, so a configuration made in the interface can be copied into a script.
+- Preprocessing, layer and post-processing options select different feature files: extract with an option first, then train / evaluate with the same option.
+- Several post-processing values run one after the other in a single job.
+- With several GPUs, extraction is split by backbone and training / evaluation by configuration (backbone × task × classifier × layer × number of prompts), and the pieces are distributed over one job per GPU. The plan is shown before running.
+- Jobs run in the background, independently of the browser, with their commands and log in `gui_jobs/<job>/`. Closing the page does not stop them, and new jobs can be started while others are running (jobs on the same GPU share its memory).
+- Deleting a job in the Jobs tab removes only its folder in `gui_jobs/`, never features or results.
+
 ## Reproducing the paper
 
 Set `DATA_CONFIG`, `FEATURES_DIR`, `OUT_DIR` (and `CUDA_VISIBLE_DEVICES`) and run:
@@ -217,6 +268,8 @@ Set `DATA_CONFIG`, `FEATURES_DIR`, `OUT_DIR` (and `CUDA_VISIBLE_DEVICES`) and ru
 | `scripts/06_layers.sh` | Figure 11 |
 | `scripts/07_cross_model.sh` | Section 5.2: Tables 13-14, 35-42 |
 | `scripts/08_robustness.sh` | Section 5.3: Tables 15-18, Figures 14-17 |
+
+Then open `notebooks/paper_tables.ipynb`, set `RESULTS_DIR` to `OUT_DIR`, and run it: it averages the runs and prints every table, for balanced accuracy / F1 and for AP / AUC, both as a DataFrame and as LaTeX rows ready to paste into the paper (best results highlighted as in the paper).
 
 Scripts 03 and 08 evaluate the classifiers trained by script 02.
 
