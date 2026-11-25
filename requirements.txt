@@ -1,0 +1,20 @@
+# Versions used for the paper (Python 3.10, CUDA 12.8).
+torch==2.9.0
+torchvision==0.24.0
+# MetaCLIP 2 and DINOv3 need a recent transformers; this is the exact commit used for the paper
+transformers @ git+https://github.com/huggingface/transformers.git@bd15bc95a89e728bbc1224084eb3b5829428c353
+clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6
+ftfy==6.3.1
+regex==2025.11.3
+safetensors==0.8.0
+scikit-learn==1.7.2
+numpy==2.2.6
+pandas==2.3.3
+scipy==1.15.3
+pillow==12.0.0
+opencv-python==4.12.0.88
+joblib==1.5.2
+tqdm==4.66.4
+PyYAML==6.0.1
+matplotlib==3.10.7
+pyarrow==21.0.0   # only for tools/prepare_communityforensics.py
