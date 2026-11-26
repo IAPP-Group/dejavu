@@ -66,8 +66,8 @@ def confusion(y_true, y_pred, num_classes):
     return confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
 
 
-def save_confusion_matrices(cms, classes, path_stem, title=""):
-    """Save the summed counts and the run-averaged row-normalized matrix (CSV) and a PNG plot.
+def save_confusion_matrices(cms, classes, path_stem):
+    """Save the summed counts and the run-averaged row-normalized matrix (CSV) and a PNG/PDF plot.
     Rows: true class, columns: predicted class. Rows of classes absent from the set are NaN."""
     os.makedirs(os.path.dirname(path_stem), exist_ok=True)
     cms = np.stack(cms).astype(float)
@@ -76,28 +76,53 @@ def save_confusion_matrices(cms, classes, path_stem, title=""):
         mean_norm = np.nanmean(cms / cms.sum(axis=2, keepdims=True), axis=0)
     pd.DataFrame(cms.sum(0).astype(int), index=classes, columns=classes).to_csv(f"{path_stem}_counts.csv")
     pd.DataFrame(mean_norm, index=classes, columns=classes).to_csv(f"{path_stem}.csv", float_format="%.4f")
+    plot_confusion_matrix(mean_norm, classes, path_stem)
+
+
+def plot_confusion_matrix(mean_norm, classes, path_stem, title=None):
+    """Plot a row-normalized confusion matrix to <path_stem>.png (shown by the app) and <path_stem>.pdf,
+    in the style of the paper figures (10x8 in, light-gray frames, no title unless given).
+    Rows that are all NaN (classes absent from the evaluation set) are dropped."""
+    mean_norm = np.asarray(mean_norm, dtype=float)
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         keep = ~np.isnan(mean_norm).all(axis=1)
         m = mean_norm[keep]
-        fig, ax = plt.subplots(figsize=(0.8 * len(classes) + 2, 0.7 * keep.sum() + 1.8))
-        im = ax.imshow(m, cmap="Blues", vmin=0, vmax=1)
-        ax.set_xticks(range(len(classes)), classes, rotation=45, ha="right")
-        ax.set_yticks(range(keep.sum()), [c for c, k in zip(classes, keep) if k])
-        for i in range(m.shape[0]):
-            for j in range(m.shape[1]):
-                ax.text(j, i, f"{m[i, j]:.2f}", ha="center", va="center", fontsize=8,
-                        color="white" if m[i, j] > 0.5 else "black")
-        ax.set_xlabel("Predicted label")
-        ax.set_ylabel("True label")
-        if title:
-            ax.set_title(title, fontsize=9)
-        fig.colorbar(im, ax=ax, fraction=0.046)
-        fig.tight_layout()
-        fig.savefig(f"{path_stem}.png", dpi=150)
-        plt.close(fig)
+        cmap = plt.get_cmap("Blues")
+        with plt.rc_context({"font.size": 13}):
+            fig, ax = plt.subplots(figsize=(10, 8))
+            im = ax.imshow(m, cmap=cmap, vmin=0, vmax=1, interpolation="nearest")
+            for i in range(m.shape[0]):
+                for j in range(m.shape[1]):
+                    ax.text(j, i, f"{m[i, j]:.2f}", ha="center", va="center",
+                            color=cmap(0.0) if m[i, j] > 0.5 else cmap(1.0))
+            ax.set_xticks(range(len(classes)), classes, rotation=45)
+            ax.set_yticks(range(keep.sum()), [c for c, k in zip(classes, keep) if k])
+            ax.tick_params(length=0)
+            ax.set_xlabel("Predicted label")
+            ax.set_ylabel("True label")
+            ax.grid(False)
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_color("lightgray")
+                spine.set_linewidth(1)
+            # colorbar as tall as the matrix, also when rows of absent classes are dropped
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            cax = make_axes_locatable(ax).append_axes("right", size="6%", pad=0.5)
+            cbar = fig.colorbar(im, cax=cax)
+            cbar.set_ticks(np.linspace(0, 1, 6), labels=[f"{t:.1f}" for t in np.linspace(0, 1, 6)])
+            cbar.ax.tick_params(length=0)
+            cbar.outline.set_edgecolor("lightgray")
+            cbar.outline.set_linewidth(1)
+            if title:
+                ax.set_title(title)
+            fig.set_facecolor("white")
+            fig.tight_layout()
+            fig.savefig(f"{path_stem}.png", dpi=150)
+            fig.savefig(f"{path_stem}.pdf")
+            plt.close(fig)
     except Exception as e:  # plotting is optional
         print(f"  [warn] could not plot confusion matrix: {e}")
 

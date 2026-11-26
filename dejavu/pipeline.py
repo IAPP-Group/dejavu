@@ -157,8 +157,7 @@ class Evaluator:
         for name, cms in self.cms.items():
             if cms:
                 tag = name + (f"__{self.degradation_tag}" if self.degradation_tag else "")
-                save_confusion_matrices(cms, self.classes, os.path.join(self.run_dir, "confusion_matrices", tag),
-                                        title=f"{self.cfg.backbone} / {self.cfg.name} / {tag}")
+                save_confusion_matrices(cms, self.classes, os.path.join(self.run_dir, "confusion_matrices", tag))
         print_summary(self.rows)
 
 

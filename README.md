@@ -25,9 +25,11 @@ The pipeline has two stages: features are extracted once per backbone and split 
 extract_features.py   feature extraction (backbones, preprocessing, layers, post-processing)
 train.py              train classifiers on GenImage train, evaluate on any evaluation set (validation or test)
 evaluate.py           evaluate trained classifiers (OOD sets, post-processed images)
+predict.py            apply a trained classifier (e.g. the DejaVu checkpoints) to your own images
 summarize.py          average the per-run metrics (mean ± std)
 app.py                graphical interface over the scripts above
 notebooks/            paper_tables.ipynb: the tables of the paper (DataFrame + LaTeX) from the metrics
+checkpoints/          trained DejaVu classifiers for the three tasks
 dejavu/               library code
 data/splits/          split CSVs (image paths, labels, generators, prompts)
 configs/              dataset locations
@@ -193,7 +195,7 @@ The configuration is identified by the same options as in `train.py`
     config.json
     classifiers/run<r>.pth|.pkl
     predictions/<eval_set>[__<post-processing>]__run<r>.npz   image paths, labels, predictions, scores
-    confusion_matrices/<eval_set>.{csv,png}   attribution and joint task: run-averaged, row-normalized
+    confusion_matrices/<eval_set>.{csv,png,pdf} attribution and joint task: run-averaged, row-normalized
     confusion_matrices/<eval_set>_counts.csv  counts summed over runs
 ```
 
@@ -205,9 +207,43 @@ Predicted labels are the argmax of the class scores, with no threshold tuning.
 python summarize.py results/metrics/detection.csv --filter eval_set=genimage_validation --output summary.csv
 ```
 
-### 5. Graphical interface
+### 5. Predict on your own images
 
-`app.py` is a web interface for the same pipeline. Backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators, evaluation sets and post-processing are chosen from forms instead of command-line options. The interface only builds and runs the commands of sections 1-3, so its results are identical to those of the scripts.
+`checkpoints/` holds the trained DejaVu classifiers (MetaCLIP2-ViT-bigG/14 + 3-MLP, trained on the whole GenImage train set; for each task, the run whose GenImage test accuracy is closest to the mean of the 10 runs):
+
+| file | task | classes (output order) |
+|---|---|---|
+| `checkpoints/dejavu_det.pth` | `detection` | real, fake |
+| `checkpoints/dejavu_attr.pth` | `attribution` | adm, biggan, glide, midjourney, sdv4, sdv5, vqdm, wukong |
+| `checkpoints/dejavu_joint.pth` | `detection+attribution` | real, adm, biggan, glide, midjourney, sdv4, sdv5, vqdm, wukong |
+
+The JSON next to each checkpoint records its configuration, training options, training CSV and GenImage test results.
+
+`predict.py` applies a checkpoint to any images, with no need for split CSVs or precomputed features: the features are extracted on the fly with the checkpoint's backbone (read from its JSON) and the classifier predicts every image.
+
+```bash
+# unlabelled images: files and/or folders (searched recursively)
+python predict.py --checkpoint checkpoints/dejavu_det.pth --images my_images/ other/image.png
+
+# labelled images: a CSV with image_path and, optionally, label (real/fake or 0/1) and model (generator)
+python predict.py --checkpoint checkpoints/dejavu_joint.pth --csv my_dataset.csv --out predictions/my_dataset
+```
+
+In the CSV, `image_path` is absolute or relative to `--image_root` (default: the CSV's folder). The ground truth is used for the metrics: `label` for detection, `model` for attribution (only fakes from the 8 GenImage generators count; others are predicted but left out), both for the joint task.
+
+Outputs in `--out` (default `predictions/<checkpoint name>/`):
+
+```
+predictions.csv   image_path, [label, model,] prediction, score_<class> for every class
+metrics.json      only with ground truth: the metrics of section 4 (+ per-generator detection metrics if `model` is given)
+```
+
+Any classifier trained with `train.py` can be used the same way, e.g. `--checkpoint results/detection/RN50x64/3-MLP/classifiers/run0.pth` (its configuration is read from the `config.json` of its folder). For a checkpoint without a JSON, pass `--backbone` and `--task`.
+In the paper, GenImage fake images (PNG) are JPEG-compressed at QF=96 before feature extraction to match the JPEG real images; `--fake_qf96` does the same to reproduce that setting (it needs the `label` column). Leave it off for other data, as for the OOD benchmarks.
+
+### 6. Graphical interface
+
+`app.py` is a web interface for the same pipeline. Backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators, evaluation sets and post-processing are chosen from forms instead of command-line options. The interface only builds and runs the commands of sections 1-3 and 5, so its results are identical to those of the scripts.
 
 #### Starting it
 
@@ -234,6 +270,7 @@ On a remote server, forward port 8501 to your machine: VS Code does it automatic
 | Feature extraction | runs `extract_features.py`: backbones, splits, preprocessing, final embedding / selected layers / all layers, post-processing |
 | Training | runs `train.py`: backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators (cross-model), evaluation sets, hyperparameters (defaults = paper) |
 | Evaluation | runs `evaluate.py` on saved classifiers: same configuration options as Training, plus evaluation sets, post-processing and runs |
+| Predict | runs `predict.py`: a checkpoint (the DejaVu ones in `checkpoints/` or any classifier in the output folder), images / folders or a CSV, output folder; then shows the metrics (with ground truth) and the predictions, with CSV download |
 | Jobs | launched jobs with status and live log; a running job can be stopped, finished ones deleted |
 | Results | mean (± std) over runs of `<out_dir>/metrics/*.csv`, with filters and CSV download; optionally the confusion matrices |
 

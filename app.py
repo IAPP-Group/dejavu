@@ -3,7 +3,7 @@
     streamlit run app.py              # then open http://localhost:8501
 
 The interface only builds and launches the same commands documented in the README
-(extract_features.py, train.py, evaluate.py): every form shows the exact command it
+(extract_features.py, train.py, evaluate.py, predict.py): every form shows the exact command it
 will run. Jobs run in the background, independently of the browser, with their log in
 gui_jobs/<job>/log.txt, so a long extraction or training survives closing the page.
 """
@@ -427,6 +427,98 @@ def page_evaluate():
     launch_button("evaluate", units, errors, warnings, split_keys=TRAIN_SPLIT_KEYS)
 
 
+def checkpoint_choices():
+    """Released checkpoints first, then the classifiers saved in the output folder."""
+    order = {"dejavu_det": 0, "dejavu_attr": 1, "dejavu_joint": 2}
+    found = sorted(glob.glob(os.path.join(ROOT, "checkpoints", "*.pth")) + glob.glob(os.path.join(ROOT, "checkpoints", "*.pkl")),
+                   key=lambda f: (order.get(os.path.splitext(os.path.basename(f))[0], 9), f))
+    found += sorted(glob.glob(os.path.join(st.session_state.out_dir, "*", "*", "*", "classifiers", "run*.*")))
+    return [os.path.relpath(f, ROOT) if f.startswith(ROOT) else f for f in found]
+
+
+def page_predict():
+    st.subheader("Predict on your own images")
+    st.caption("Applies a trained classifier (e.g. the released DejaVu checkpoints in checkpoints/) to any images: "
+               "the features are extracted on the fly with the classifier's backbone. With a CSV holding the "
+               "ground truth (label: real/fake, model: generator) the metrics are computed too.")
+    choices = checkpoint_choices()
+    c1, c2 = st.columns([3, 2])
+    ckpt = c1.selectbox("Checkpoint", choices + ["other…"], key="pr_ckpt",
+                        help="checkpoints/dejavu_{det,attr,joint}.pth = DejaVu for detection, attribution and "
+                             "the joint task. Backbone and task are read from the JSON next to the checkpoint.")
+    if ckpt == "other…":
+        ckpt = c2.text_input("Checkpoint path (.pth / .pkl)", key="pr_ckpt_other")
+    elif ckpt:
+        stem = os.path.splitext(os.path.join(ROOT, ckpt))[0]
+        cfg_file = next((f for f in (stem + ".json", os.path.join(os.path.dirname(os.path.dirname(stem)), "config.json"))
+                         if os.path.isfile(f)), None)
+        if cfg_file:
+            import json
+            cfg = json.load(open(cfg_file))["config"]
+            c2.caption(f"**Backbone:** {cfg['backbone']}  \n**Task:** {cfg['task']}  \n"
+                       f"**Preprocessing:** {cfg.get('preprocess') or 'default'}  \n**Layer:** {cfg.get('layer') or 'final'}")
+    mode = st.radio("Input", ["images / folders", "CSV"], horizontal=True, key="pr_mode")
+    errors, src = [], []
+    fake_qf96 = False
+    if mode == "CSV":
+        c1, c2 = st.columns(2)
+        csv = c1.text_input("CSV file", key="pr_csv",
+                            help="Columns: image_path (absolute, or relative to the image root), optional "
+                                 "label (real/fake or 0/1) and model (generator of the fakes).")
+        root = c2.text_input("Image root (optional, default: the CSV's folder)", key="pr_root")
+        fake_qf96 = st.checkbox("JPEG QF=96 on the fake images (GenImage protocol of the paper)", key="pr_qf96",
+                                help="Only to reproduce the GenImage setting, whose PNG fakes were compressed to "
+                                     "match the JPEG real images. Leave off for other data (as for the OOD benchmarks).")
+        src = [("csv", csv or None), ("image_root", root or None)]
+        if not csv:
+            errors.append("Give the CSV file.")
+        elif not os.path.isfile(csv if os.path.isabs(csv) else os.path.join(ROOT, csv)):
+            errors.append(f"CSV not found: {csv}")
+    else:
+        paths = st.text_area("Image files and/or folders (one per line; folders are searched recursively)",
+                             key="pr_images")
+        paths = [l.strip() for l in paths.splitlines() if l.strip()]
+        src = [("images", paths)]
+        if not paths:
+            errors.append("Give at least one image or folder.")
+    name = os.path.splitext(os.path.basename(ckpt))[0] if ckpt else "predictions"
+    out = st.text_input("Output folder", os.path.join("predictions", name), key=f"pr_out_{name}")
+    with st.expander("Other options"):
+        c1, c2, c3 = st.columns(3)
+        dtype = c1.selectbox("Precision (HF)", ["float32", "float16", "bfloat16"], key="pr_dtype")
+        bs = c2.number_input("Batch size", 1, 1024, 32, key="pr_bs")
+        nw = c3.number_input("Workers", 0, 64, 4, key="pr_nw")
+    if not ckpt:
+        errors.append("Select a checkpoint.")
+    unit = ("predict.py", [("checkpoint", ckpt or None), *src, ("out", out), ("fake_qf96", fake_qf96),
+                           ("dtype", None if dtype == "float32" else dtype),
+                           ("batch_size", None if bs == 32 else bs), ("num_workers", None if nw == 4 else nw)])
+    launch_button("predict", [unit], errors, split_keys=())
+
+    st.divider()
+    st.subheader("Predictions")
+    out_abs = out if os.path.isabs(out) else os.path.join(ROOT, out)
+    pred_csv = os.path.join(out_abs, "predictions.csv")
+    if not os.path.isfile(pred_csv):
+        st.info(f"No predictions in {out} yet: run the job and follow it in the *Jobs* tab.")
+        return
+    metrics_file = os.path.join(out_abs, "metrics.json")
+    if os.path.isfile(metrics_file):
+        import json
+        m = json.load(open(metrics_file))
+        cols = st.columns(4)
+        for col, (k, label) in zip(cols, [("balanced_accuracy", "Acc."), ("f1_score", "F1"), ("ap", "AP"), ("auc", "AUC")]):
+            col.metric(label, f"{m[k]:.3f}")
+        if m.get("per_generator"):
+            pg = pd.DataFrame(m["per_generator"])[["model", "n_samples", "balanced_accuracy", "f1_score", "ap", "auc"]]
+            st.caption("Detection per generator (each paired with all the real images)")
+            st.dataframe(pg.style.format(precision=3), hide_index=True, width="stretch")
+    df = pd.read_csv(pred_csv)
+    st.caption(f"{len(df)} images · " + ", ".join(f"{k}: {v}" for k, v in df.prediction.value_counts().items()))
+    st.dataframe(df, hide_index=True, width="stretch")
+    st.download_button("Download predictions.csv", df.to_csv(index=False), file_name="predictions.csv", mime="text/csv")
+
+
 def page_jobs():
     st.subheader("Jobs")
     jobs = sorted(glob.glob(os.path.join(JOBS_DIR, "*")), reverse=True)
@@ -552,7 +644,7 @@ def main():
                    "(jobs on the same GPU share its memory).")
         st.caption(f"Jobs and logs: {os.path.relpath(JOBS_DIR, ROOT)}/")
 
-    tabs = st.tabs(["Feature extraction", "Training", "Evaluation", "Jobs", "Results"])
+    tabs = st.tabs(["Feature extraction", "Training", "Evaluation", "Predict", "Jobs", "Results"])
     with tabs[0]:
         page_extract()
     with tabs[1]:
@@ -560,8 +652,10 @@ def main():
     with tabs[2]:
         page_evaluate()
     with tabs[3]:
-        page_jobs()
+        page_predict()
     with tabs[4]:
+        page_jobs()
+    with tabs[5]:
         page_results()
 
 
