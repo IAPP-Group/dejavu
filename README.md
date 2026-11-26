@@ -25,7 +25,7 @@ The pipeline has two stages: features are extracted once per backbone and split 
 extract_features.py   feature extraction (backbones, preprocessing, layers, post-processing)
 train.py              train classifiers on GenImage train, evaluate on any evaluation set (validation or test)
 evaluate.py           evaluate trained classifiers (OOD sets, post-processed images)
-predict.py            apply a trained classifier (e.g. the DejaVu checkpoints) to your own images
+run_dejavu.py         run DejaVu (or any trained classifier) on your own images
 summarize.py          average the per-run metrics (mean ± std)
 app.py                graphical interface over the scripts above
 notebooks/            paper_tables.ipynb: the tables of the paper (DataFrame + LaTeX) from the metrics
@@ -207,7 +207,7 @@ Predicted labels are the argmax of the class scores, with no threshold tuning.
 python summarize.py results/metrics/detection.csv --filter eval_set=genimage_validation --output summary.csv
 ```
 
-### 5. Predict on your own images
+### 5. Run DejaVu on your own images
 
 `checkpoints/` holds the trained DejaVu classifiers (MetaCLIP2-ViT-bigG/14 + 3-MLP, trained on the whole GenImage train set; for each task, the run whose GenImage test accuracy is closest to the mean of the 10 runs):
 
@@ -219,14 +219,14 @@ python summarize.py results/metrics/detection.csv --filter eval_set=genimage_val
 
 The JSON next to each checkpoint records its configuration, training options, training CSV and GenImage test results.
 
-`predict.py` applies a checkpoint to any images, with no need for split CSVs or precomputed features: the features are extracted on the fly with the checkpoint's backbone (read from its JSON) and the classifier predicts every image.
+`run_dejavu.py` applies a checkpoint to any images, with no need for split CSVs or precomputed features: the features are extracted on the fly with the checkpoint's backbone (read from its JSON) and the classifier predicts every image.
 
 ```bash
 # unlabelled images: files and/or folders (searched recursively)
-python predict.py --checkpoint checkpoints/dejavu_det.pth --images my_images/ other/image.png
+python run_dejavu.py --checkpoint checkpoints/dejavu_det.pth --images my_images/ other/image.png
 
 # labelled images: a CSV with image_path and, optionally, label (real/fake or 0/1) and model (generator)
-python predict.py --checkpoint checkpoints/dejavu_joint.pth --csv my_dataset.csv --out predictions/my_dataset
+python run_dejavu.py --checkpoint checkpoints/dejavu_joint.pth --csv my_dataset.csv --out predictions/my_dataset
 ```
 
 In the CSV, `image_path` is absolute or relative to `--image_root` (default: the CSV's folder). The ground truth is used for the metrics: `label` for detection, `model` for attribution (only fakes from the 8 GenImage generators count; others are predicted but left out), both for the joint task.
@@ -235,6 +235,7 @@ Outputs in `--out` (default `predictions/<checkpoint name>/`):
 
 ```
 predictions.csv   image_path, [label, model,] prediction, score_<class> for every class
+run_info.json     checkpoint, backbone, task, classes and input of the run
 metrics.json      only with ground truth: the metrics of section 4 (+ per-generator detection metrics if `model` is given)
 ```
 
@@ -270,7 +271,7 @@ On a remote server, forward port 8501 to your machine: VS Code does it automatic
 | Feature extraction | runs `extract_features.py`: backbones, splits, preprocessing, final embedding / selected layers / all layers, post-processing |
 | Training | runs `train.py`: backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators (cross-model), evaluation sets, hyperparameters (defaults = paper) |
 | Evaluation | runs `evaluate.py` on saved classifiers: same configuration options as Training, plus evaluation sets, post-processing and runs |
-| Predict | runs `predict.py`: a checkpoint (the DejaVu ones in `checkpoints/` or any classifier in the output folder), images / folders or a CSV, output folder; then shows the metrics (with ground truth) and the predictions, with CSV download |
+| Run DejaVu | runs `run_dejavu.py`: a checkpoint (the DejaVu ones in `checkpoints/` or any classifier in the output folder), images / folders or a CSV, output folder; then shows the metrics (with ground truth) and the predictions, as a table or as images (a single image is shown large, with its verdict and scores; several images as a gallery with filters, sorting by P(fake) and, with ground truth, *only wrong predictions*), with CSV download |
 | Jobs | launched jobs with status and live log; a running job can be stopped, finished ones deleted |
 | Results | mean (± std) over runs of `<out_dir>/metrics/*.csv`, with filters and CSV download; optionally the confusion matrices |
 

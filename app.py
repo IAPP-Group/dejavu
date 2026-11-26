@@ -3,7 +3,7 @@
     streamlit run app.py              # then open http://localhost:8501
 
 The interface only builds and launches the same commands documented in the README
-(extract_features.py, train.py, evaluate.py, predict.py): every form shows the exact command it
+(extract_features.py, train.py, evaluate.py, run_dejavu.py): every form shows the exact command it
 will run. Jobs run in the background, independently of the browser, with their log in
 gui_jobs/<job>/log.txt, so a long extraction or training survives closing the page.
 """
@@ -436,8 +436,8 @@ def checkpoint_choices():
     return [os.path.relpath(f, ROOT) if f.startswith(ROOT) else f for f in found]
 
 
-def page_predict():
-    st.subheader("Predict on your own images")
+def page_run_dejavu():
+    st.subheader("Run DejaVu on your own images")
     st.caption("Applies a trained classifier (e.g. the released DejaVu checkpoints in checkpoints/) to any images: "
                "the features are extracted on the fly with the classifier's backbone. With a CSV holding the "
                "ground truth (label: real/fake, model: generator) the metrics are computed too.")
@@ -490,18 +490,49 @@ def page_predict():
         nw = c3.number_input("Workers", 0, 64, 4, key="pr_nw")
     if not ckpt:
         errors.append("Select a checkpoint.")
-    unit = ("predict.py", [("checkpoint", ckpt or None), *src, ("out", out), ("fake_qf96", fake_qf96),
+    unit = ("run_dejavu.py", [("checkpoint", ckpt or None), *src, ("out", out), ("fake_qf96", fake_qf96),
                            ("dtype", None if dtype == "float32" else dtype),
                            ("batch_size", None if bs == 32 else bs), ("num_workers", None if nw == 4 else nw)])
-    launch_button("predict", [unit], errors, split_keys=())
+    launch_button("run_dejavu", [unit], errors, split_keys=())
 
     st.divider()
-    st.subheader("Predictions")
+    running = running_jobs_for(out)
+    # while a job writes to this folder the section refreshes itself; when the job ends the whole
+    # page reruns once, which also stops the polling
+    st.fragment(run_every=5 if running else None)(show_predictions)(out, bool(running))
+
+
+def running_jobs_for(out):
+    """Running run_dejavu.py jobs whose output folder is `out`."""
+    jobs = []
+    for jdir in glob.glob(os.path.join(JOBS_DIR, "*_run_dejavu*")):
+        try:
+            commands = open(os.path.join(jdir, "commands.sh")).read()
+        except OSError:
+            continue
+        if f"--out {shlex.quote(out)}" in commands and job_status(jdir).startswith("⏳"):
+            jobs.append(os.path.basename(jdir))
+    return jobs
+
+
+def show_predictions(out, was_running):
+    running = running_jobs_for(out)
+    if was_running and not running:
+        st.rerun()   # the job has just finished: show its results and stop refreshing
+    c1, c2 = st.columns([6, 1])
+    c1.subheader("Predictions")
+    c2.button("🔄 Refresh", key="pr_refresh", help="Reload the predictions of the output folder.")
     out_abs = out if os.path.isabs(out) else os.path.join(ROOT, out)
     pred_csv = os.path.join(out_abs, "predictions.csv")
+    if running:
+        st.info(f"⏳ Job {', '.join(running)} is writing to {out}: this section refreshes automatically "
+                f"when it finishes (log in the *Jobs* tab)."
+                + (" The predictions below are those of a previous run." if os.path.isfile(pred_csv) else ""))
     if not os.path.isfile(pred_csv):
-        st.info(f"No predictions in {out} yet: run the job and follow it in the *Jobs* tab.")
+        if not running:
+            st.info(f"No predictions in {out} yet: run the job and follow it in the *Jobs* tab.")
         return
+    st.caption(f"{pred_csv} · written {datetime.fromtimestamp(os.path.getmtime(pred_csv)):%Y-%m-%d %H:%M:%S}")
     metrics_file = os.path.join(out_abs, "metrics.json")
     if os.path.isfile(metrics_file):
         import json
@@ -515,8 +546,158 @@ def page_predict():
             st.dataframe(pg.style.format(precision=3), hide_index=True, width="stretch")
     df = pd.read_csv(pred_csv)
     st.caption(f"{len(df)} images · " + ", ".join(f"{k}: {v}" for k, v in df.prediction.value_counts().items()))
-    st.dataframe(df, hide_index=True, width="stretch")
+    views = ["Images", "Table"]
+    view = st.radio("View", views, index=0 if len(df) == 1 else 1, horizontal=True, key=f"pr_view_{out}",
+                    help="Images: each image with its prediction and scores.")
+    if view == "Images":
+        show_prediction_images(df, out_abs)
+    else:
+        st.dataframe(df, hide_index=True, width="stretch")
     st.download_button("Download predictions.csv", df.to_csv(index=False), file_name="predictions.csv", mime="text/csv")
+
+
+# ---------------------------------------------------------------------------
+# Visual view of the predictions of run_dejavu.py
+# ---------------------------------------------------------------------------
+
+@st.cache_data(max_entries=512, show_spinner=False)
+def thumbnail(path, size, mtime):
+    """Downscaled copy of an image (the originals can be large); None if it cannot be read."""
+    from PIL import Image
+    try:
+        image = Image.open(path).convert("RGB")
+    except Exception:
+        return None
+    image.thumbnail((size, size))
+    return image
+
+
+def prediction_info(df, out_abs):
+    """Task, classes and absolute image paths of a predictions.csv."""
+    import json
+    info_file = os.path.join(out_abs, "run_info.json")
+    info = json.load(open(info_file)) if os.path.isfile(info_file) else {}
+    classes = info.get("classes") or [c[len("score_"):] for c in df.columns if c.startswith("score_")]
+    task = info.get("task") or ("detection" if classes == ["real", "fake"]
+                                else "detection+attribution" if classes[0] == "real" else "attribution")
+    base = info.get("image_base_dir") or ROOT
+    files = [p if os.path.isabs(p) else os.path.join(base, p) for p in df.image_path]
+    return task, classes, files
+
+
+def fake_probability(row, task):
+    if task == "detection":
+        return row["score_fake"]
+    if task == "detection+attribution":
+        return 1.0 - row["score_real"]
+    return None   # attribution: every image is assumed to be fake
+
+
+def verdict_markdown(row, task, classes, big=False):
+    """Coloured verdict: REAL / FAKE (+ generator) or the attributed generator."""
+    pred = row["prediction"]
+    if task == "attribution":
+        badge, extra = f":violet-background[{pred}]", f" {row[f'score_{pred}']:.1%}"
+    elif pred == "real":
+        badge, extra = ":green-background[REAL]", ""
+    else:
+        badge, extra = f":red-background[FAKE{f' · {pred}' if task == 'detection+attribution' else ''}]", ""
+    return f"### {badge}{extra}" if big else f"**{badge}**{extra}"
+
+
+def truth_markdown(row, task):
+    """Ground truth and ✓/✗, when the CSV had it."""
+    truth = None
+    if task == "detection" and "label" in row:
+        truth = row["label"]
+    elif task == "attribution" and "model" in row and row.get("label") != "real":
+        truth = row["model"]
+    elif task == "detection+attribution" and "label" in row:
+        truth = "real" if row["label"] == "real" else row.get("model", "fake")
+    if truth is None or pd.isna(truth):
+        return ""
+    ok = row["prediction"] == truth
+    return f"{'✅' if ok else '❌'} true: {truth}"
+
+
+def score_bars(row, task, classes, top=None):
+    p_fake = fake_probability(row, task)
+    if p_fake is not None:
+        st.progress(float(p_fake), text=f"P(fake) = {p_fake:.3f}")
+    if task == "detection+attribution" and row["prediction"] == "real" and top:
+        return   # gallery: no generator breakdown for images predicted real
+    if task != "detection":
+        gens = [c for c in classes if c != "real"]
+        scores = sorted(((row[f"score_{c}"], c) for c in gens), reverse=True)[:top or len(gens)]
+        # joint task: generator scores renormalized over the fake classes
+        tot = (sum(row[f"score_{c}"] for c in gens) if task == "detection+attribution" else 1.0) or 1.0
+        label = "P(generator | fake)" if task == "detection+attribution" else "P(generator)"
+        if top:
+            st.caption(label + ": " + ", ".join(f"{c} {v / tot:.2f}" for v, c in scores))
+        else:
+            st.caption(label)
+            st.bar_chart(pd.DataFrame({"generator": [c for _, c in scores], "score": [v / tot for v, _ in scores]}),
+                         x="generator", y="score", horizontal=True, height=34 * len(scores) + 40)
+
+
+def show_prediction_images(df, out_abs):
+    task, classes, files = prediction_info(df, out_abs)
+    df = df.assign(_file=files)
+
+    if len(df) == 1:   # a single image: large, with every score
+        row = df.iloc[0]
+        c1, c2 = st.columns([3, 2])
+        img = thumbnail(row["_file"], 1024, os.path.getmtime(row["_file"])) if os.path.isfile(row["_file"]) else None
+        if img is None:
+            c1.warning(f"Cannot open {row['_file']}")
+        else:
+            c1.image(img, caption=os.path.basename(row["image_path"]))
+        with c2:
+            st.markdown(verdict_markdown(row, task, classes, big=True))
+            if truth_markdown(row, task):
+                st.markdown(truth_markdown(row, task))
+            score_bars(row, task, classes)
+        return
+
+    # several images: filters, sorting and a paginated gallery
+    c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+    preds = sorted(df.prediction.unique())
+    sel = c1.multiselect("Predicted class", preds, key="pr_g_pred", placeholder="all")
+    if sel:
+        df = df[df.prediction.isin(sel)]
+    if task == "attribution":
+        df = df.assign(_key=[r[f"score_{r['prediction']}"] for _, r in df.iterrows()])
+        orders = {"file order": None, "confidence ↓": False, "confidence ↑": True}
+    else:
+        df = df.assign(_key=[fake_probability(r, task) for _, r in df.iterrows()])
+        orders = {"file order": None, "P(fake) ↓": False, "P(fake) ↑": True}
+    order = c2.selectbox("Sort by", list(orders), key="pr_g_sort")
+    if orders[order] is not None:
+        df = df.sort_values("_key", ascending=orders[order])
+    has_truth = ("model" if task == "attribution" else "label") in df.columns
+    if has_truth and st.checkbox("Only wrong predictions", key="pr_g_wrong"):
+        df = df[[truth_markdown(r, task).startswith("❌") for _, r in df.iterrows()]]
+    ncols = c3.selectbox("Columns", [3, 4, 5, 6], index=1, key="pr_g_cols")
+    per_page = c4.selectbox("Per page", [12, 24, 48, 96], index=1, key="pr_g_pp")
+    if df.empty:
+        st.info("No images match the filters.")
+        return
+    pages = (len(df) + per_page - 1) // per_page
+    page = st.number_input(f"Page (of {pages}, {len(df)} images)", 1, pages, 1, key="pr_g_page") if pages > 1 else 1
+    chunk = df.iloc[(page - 1) * per_page: page * per_page]
+    for start in range(0, len(chunk), ncols):
+        for col, (_, row) in zip(st.columns(ncols), chunk.iloc[start:start + ncols].iterrows()):
+            with col.container(border=True):
+                f = row["_file"]
+                img = thumbnail(f, 384, os.path.getmtime(f)) if os.path.isfile(f) else None
+                if img is None:
+                    st.warning(f"Cannot open {os.path.basename(f)}")
+                else:
+                    st.image(img, width="stretch")
+                st.markdown(verdict_markdown(row, task, classes))
+                score_bars(row, task, classes, top=3)
+                st.caption(os.path.basename(row["image_path"]) + ("  \n" + truth_markdown(row, task)
+                                                                  if truth_markdown(row, task) else ""))
 
 
 def page_jobs():
@@ -644,7 +825,7 @@ def main():
                    "(jobs on the same GPU share its memory).")
         st.caption(f"Jobs and logs: {os.path.relpath(JOBS_DIR, ROOT)}/")
 
-    tabs = st.tabs(["Feature extraction", "Training", "Evaluation", "Predict", "Jobs", "Results"])
+    tabs = st.tabs(["Feature extraction", "Training", "Evaluation", "Run DejaVu", "Jobs", "Results"])
     with tabs[0]:
         page_extract()
     with tabs[1]:
@@ -652,7 +833,7 @@ def main():
     with tabs[2]:
         page_evaluate()
     with tabs[3]:
-        page_predict()
+        page_run_dejavu()
     with tabs[4]:
         page_jobs()
     with tabs[5]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Apply a trained classifier (e.g. the released DejaVu checkpoints) to your own images.
+"""Run DejaVu (or any classifier trained with train.py) on your own images.
 
 Unlike evaluate.py, which works on the registered splits and precomputed features, this
 script takes any images, extracts their features with the classifier's backbone and
@@ -20,13 +20,14 @@ results/<task>/<backbone>/<config>/ folder for its classifiers/run<r>.pth).
 
 Outputs (--out, default: predictions/<checkpoint name>/):
   predictions.csv       image_path, [label, model,] prediction, score of every class
+  run_info.json         checkpoint, backbone, task, classes and input of the run
   metrics.json          only with ground truth (+ per-generator detection metrics)
 
 Examples
 --------
-  python predict.py --checkpoint checkpoints/dejavu_det.pth --images my_images/
-  python predict.py --checkpoint checkpoints/dejavu_attr.pth --csv my_dataset.csv --out predictions/my_dataset
-  python predict.py --checkpoint results/detection/RN50x64/3-MLP/classifiers/run0.pth --images a.png b.jpg
+  python run_dejavu.py --checkpoint checkpoints/dejavu_det.pth --images my_images/
+  python run_dejavu.py --checkpoint checkpoints/dejavu_attr.pth --csv my_dataset.csv --out predictions/my_dataset
+  python run_dejavu.py --checkpoint results/detection/RN50x64/3-MLP/classifiers/run0.pth --images a.png b.jpg
 """
 
 import argparse
@@ -214,7 +215,17 @@ def main():
     for j, cl in enumerate(classes):
         out[f"score_{cl}"] = scores[:, j]
     os.makedirs(out_dir, exist_ok=True)
+    stale = os.path.join(out_dir, "metrics.json")   # from a previous run into the same folder
+    if os.path.exists(stale):
+        os.remove(stale)
     out.to_csv(os.path.join(out_dir, "predictions.csv"), index=False, float_format="%.6f")
+    # what produced the predictions (also used by the app to find the images of relative paths)
+    base = (os.path.abspath(args.image_root) if args.image_root else os.path.dirname(os.path.abspath(args.csv))) \
+        if args.csv else os.getcwd()
+    with open(os.path.join(out_dir, "run_info.json"), "w") as f:
+        json.dump({"checkpoint": args.checkpoint, "backbone": backbone_id, "task": task, "classes": classes,
+                   "preprocess": preprocess, "layer": layer, "csv": os.path.abspath(args.csv) if args.csv else None,
+                   "image_base_dir": base, "fake_qf96": args.fake_qf96}, f, indent=2)
     print(f"\nPredictions -> {os.path.join(out_dir, 'predictions.csv')}")
     print(out.prediction.value_counts().rename_axis("predicted").to_string())
 

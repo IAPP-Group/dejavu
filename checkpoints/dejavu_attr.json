@@ -22,6 +22,8 @@
     "csv": "data/splits/genimage_test.csv",
     "balanced_accuracy": 0.8345833333333333,
     "f1_score": 0.8215442170426251,
+    "ap": 0.853960213438395,
+    "auc": 0.9729026515151517,
     "mean_balanced_accuracy": 0.8348645833333332
   }
 }
