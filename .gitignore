@@ -8,4 +8,5 @@ configs/*_local.yaml
 tools/
 gui_jobs/
 notebooks/
+scripts/
 predictions/
