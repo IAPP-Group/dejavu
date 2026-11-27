@@ -292,27 +292,16 @@ On a remote server, forward port 8501 to your machine: VS Code does it automatic
 - Jobs run in the background, independently of the browser, with their commands and log in `gui_jobs/<job>/`. Closing the page does not stop them, and new jobs can be started while others are running (jobs on the same GPU share its memory).
 - Deleting a job in the Jobs tab removes only its folder in `gui_jobs/`, never features or results.
 
-## Reproducing the paper
-
-Set `DATA_CONFIG`, `FEATURES_DIR`, `OUT_DIR` (and `CUDA_VISIBLE_DEVICES`) and run:
-
-| script | paper |
-|---|---|
-| `scripts/01_extract_features.sh` | features of the 22 backbones on GenImage and the OOD benchmarks |
-| `scripts/02_main_tasks.sh` | Tables 4-9, Figures 2, 4, 7: 6 classifiers x 22 backbones x 3 tasks (in-domain); DejaVu's in-domain results of Table 10 |
-| `scripts/03_ood.sh` | Figures 3, 5, 6, 8, Tables 19-20: OOD evaluation of the 3-MLPs; DejaVu's OOD results of Table 10 |
-| `scripts/04_training_size.sh` | Section 4.4: Figures 9-10, Tables 21-34 |
-| `scripts/05_preprocessing.sh` | Table 12 |
-| `scripts/06_layers.sh` | Figure 11 |
-| `scripts/07_cross_model.sh` | Section 5.2: Tables 13-14, 35-42 |
-| `scripts/08_robustness.sh` | Section 5.3: Tables 15-18, Figures 14-17 |
-
-Then open `notebooks/paper_tables.ipynb`, set `RESULTS_DIR` to `OUT_DIR`, and run it: it averages the runs and prints every table, for balanced accuracy / F1 and for AP / AUC, both as a DataFrame and as LaTeX rows ready to paste into the paper (best results highlighted as in the paper).
-
-Scripts 03 and 08 evaluate the classifiers trained by script 02.
-
 ## Citation
-
-TODO
+@article{
+  bertazzini2026mapping,
+  title={Mapping the Landscape of Frozen Pretrained Backbones for Image Forensics},
+  author={Giulia Bertazzini and Daniele Baracchi and Dasara Shullani and Alessandro Piva},
+  journal={Transactions on Machine Learning Research},
+  issn={2835-8856},
+  year={2026},
+  url={https://openreview.net/forum?id=G2ksWOJ4Qa},
+  note={}
+}
 
 ```
