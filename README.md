@@ -244,6 +244,8 @@ In the paper, GenImage fake images (PNG) are JPEG-compressed at QF=96 before fea
 
 ### 6. Graphical interface
 
+![Graphical Interface screenshot](images/gui.png)
+
 `app.py` is a web interface for the same pipeline. Backbones, classifiers, tasks, preprocessing, layers, number of training prompts, training generators, evaluation sets and post-processing are chosen from forms instead of command-line options. The interface only builds and runs the commands of sections 1-3 and 5, so its results are identical to those of the scripts.
 
 #### Starting it
@@ -293,6 +295,7 @@ On a remote server, forward port 8501 to your machine: VS Code does it automatic
 - Deleting a job in the Jobs tab removes only its folder in `gui_jobs/`, never features or results.
 
 ## Citation
+```
 @article{
   bertazzini2026mapping,
   title={Mapping the Landscape of Frozen Pretrained Backbones for Image Forensics},
@@ -303,5 +306,4 @@ On a remote server, forward port 8501 to your machine: VS Code does it automatic
   url={https://openreview.net/forum?id=G2ksWOJ4Qa},
   note={}
 }
-
 ```
